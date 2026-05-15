@@ -2,17 +2,22 @@
 
   <PropertyGroup>
     <IsPackable>true</IsPackable>
-    <PackageId>Nwo.ServiceDefaults</PackageId>
+    <PackageId>ServiceDefaults</PackageId>
     <Version>1.0.0</Version>
-    <Description>Shared Aspire service defaults (OpenTelemetry, Serilog, health checks) for new-world-order services.</Description>
+    <Description>Shared Aspire service defaults (OpenTelemetry, Serilog, health checks) for microservices. Part of the Common package family for OtelCollector integration.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\docs\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Nwo.Constants" Version="1.0.0" />
+    <PackageReference Include="Constants" Version="1.0.0" />
     <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="10.1.0" />
     <PackageReference Include="Microsoft.Extensions.ServiceDiscovery" Version="10.1.0" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.14.0" />
@@ -22,6 +27,7 @@
     <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.13.0" />
     <PackageReference Include="OpenTelemetry.Instrumentation.EntityFrameworkCore" Version="1.14.0-beta.2" />
     <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
+    <PackageReference Include="Serilog.Settings.Configuration" Version="10.0.0" />
     <PackageReference Include="Serilog.Sinks.OpenTelemetry" Version="4.2.1-nblumhardt-02317" />
   </ItemGroup>
 

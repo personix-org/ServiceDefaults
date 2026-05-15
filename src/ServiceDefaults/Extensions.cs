@@ -2,6 +2,8 @@ using Constants;
 
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
@@ -25,18 +27,71 @@ public static class Extensions
 {
     private const string Live = "live";
 
-    public static void AddServiceDefaults<TBuilder>(this TBuilder builder, string[]? customMetersNames = null) where TBuilder : IHostApplicationBuilder
+    public static void AddServiceDefaults<TBuilder>(this TBuilder builder, string[]? customMetersNames = null, string[]? customActivitySourceNames = null, string? serviceName = null) where TBuilder : IHostApplicationBuilder
     {
         builder.Logging.ClearProviders();
         builder.Logging.AddConsole();
 
+        // Read OTEL config first — used by both Serilog sink and OTel SDK below.
+        var otlpEndpointString = builder.Configuration[OtelConstants.OtelExporterEndpointName]
+                                 ?? Environment.GetEnvironmentVariable(OtelConstants.OtelExporterEndpointName);
+
+        var otlpProtocol = builder.Configuration[OtelConstants.OtelExporterProtocolName]
+                           ?? Environment.GetEnvironmentVariable(OtelConstants.OtelExporterProtocolName);
+
+        // RESILIENCE: pokud OTel endpoint chybí, NE-throwujeme — app musí běžet i bez telemetrie.
+        // Telemetrie je nice-to-have, ne kritická pro funkci. Logy stále jdou na konzoli/launchd
+        // přes Serilog Console sink. OTel SDK se prostě neregistruje a app pokračuje normálně.
+        //
+        // Bývalý behavior throwoval ServiceDefaultRegistrationException, což zabilo launchd procesy
+        // závislé na env vars (např. AspireWatchdog po restartu systému dokud OtelCollector neběžel).
+        var otelEnabled = otlpEndpointString is not null && otlpProtocol is not null;
+
+        if (!otelEnabled)
+        {
+            // Setup Serilog jen na konzoli (žádný OTel sink, žádné exporters).
+            Log.Logger = new LoggerConfiguration()
+                .ReadFrom.Configuration(builder.Configuration)
+                .MinimumLevel.Information()
+                .Enrich.FromLogContext()
+                .WriteTo.Console()
+                .CreateLogger();
+
+            builder.Services.AddSerilog();
+            builder.AddHealthChecksAndDiscovery();
+
+            builder.Services.ConfigureHttpClientDefaults(http =>
+            {
+                http.AddStandardResilienceHandler();
+                http.AddServiceDiscovery();
+            });
+
+            builder.Services.Configure<ServiceDiscoveryOptions>(options =>
+            {
+                options.AllowedSchemes = ["http", "https"];
+            });
+
+            Log.Logger.Warning(
+                "OpenTelemetry endpoint not configured (env vars {Endpoint}, {Protocol} missing). " +
+                "Running WITHOUT telemetry export — logs go to console only. " +
+                "Set env vars to enable OTLP export.",
+                OtelConstants.OtelExporterEndpointName,
+                OtelConstants.OtelExporterProtocolName);
+            return;
+        }
+
+        // Serilog: Console is the primary sink; OTEL sink is best-effort (fire-and-forget).
+        // If the OTEL collector is not reachable the Console sink ensures logs are always visible.
+        // ReadFrom.Configuration: respect "Serilog:MinimumLevel:Override" v appsettings.json
+        // pro silnencing Polly retry / Resilience log spam.
         Log.Logger = new LoggerConfiguration()
+            .ReadFrom.Configuration(builder.Configuration)
             .MinimumLevel.Information()
             .Enrich.FromLogContext()
+            .WriteTo.Console()
             .WriteTo.OpenTelemetry(otel =>
             {
-                otel.Endpoint = builder.Configuration[OtelConstants.OtelExporterEndpointName]!;
-
+                otel.Endpoint = otlpEndpointString;
                 otel.Protocol = Serilog.Sinks.OpenTelemetry.OtlpProtocol.HttpProtobuf;
             })
             .CreateLogger();
@@ -47,32 +102,14 @@ public static class Extensions
 
         builder.Services.ConfigureHttpClientDefaults(http =>
         {
-            // Turn on resilience by default
+            // Turn on resilience by default — but not for OTEL exporters (they use their own transport)
             http.AddStandardResilienceHandler();
 
             // Turn on service discovery by default
             http.AddServiceDiscovery();
         });
 
-        builder.Services.Configure<ServiceDiscoveryOptions>(options => { options.AllowedSchemes = ["http"]; });
-        builder.Logging.AddConsole();
-
-        var otlpEndpointString = builder.Configuration[OtelConstants.OtelExporterEndpointName]
-                                 ?? Environment.GetEnvironmentVariable(OtelConstants.OtelExporterEndpointName)!;
-
-        if (otlpEndpointString is null)
-        {
-            throw new ServiceDefaultRegistrationException(
-                $"OpenTelemetry Exporter Endpoint is not configured. Please set the '{OtelConstants.OtelExporterEndpointName}' configuration value or environment variable.");
-        }
-
-        var otlpProtocol = builder.Configuration[OtelConstants.OtelExporterProtocolName]
-                           ?? Environment.GetEnvironmentVariable(OtelConstants.OtelExporterProtocolName)!;
-
-        if (otlpProtocol is null)
-        {
-            throw new ServiceDefaultRegistrationException($"OpenTelemetry Exporter Protocol is not configured. Please set the '{OtelConstants.OtelExporterProtocolName}' configuration value or environment variable.");
-        }
+        builder.Services.Configure<ServiceDiscoveryOptions>(options => { options.AllowedSchemes = ["http", "https"]; });
 
         var otlpEndpoint = new Uri(otlpEndpointString);
         var otlpProto = otlpProtocol.Equals(OtelConstants.OtelExporterProtocolValueGrpc, StringComparison.OrdinalIgnoreCase)
@@ -82,11 +119,15 @@ public static class Extensions
         builder.Services.AddOpenTelemetry()
             .ConfigureResource(resource =>
             {
+                // RESILIENCE: missing OTEL_RESOURCE_ATTRIBUTES = warning, ne crash.
+                // Service.instance.id se autogeneruje pokud chybí.
                 var resourceAttributes = Environment.GetEnvironmentVariable("OTEL_RESOURCE_ATTRIBUTES");
 
                 if (resourceAttributes is null)
                 {
-                    throw new ServiceDefaultRegistrationException("OTEL_RESOURCE_ATTRIBUTES environment variable is not set.");
+                    Log.Logger.Warning(
+                        "OTEL_RESOURCE_ATTRIBUTES env var not set — service.instance.id will be auto-generated.");
+                    resourceAttributes = string.Empty;
                 }
 
                 string? instanceId = null;
@@ -101,7 +142,7 @@ public static class Extensions
                 }
 
                 resource.AddService(
-                    serviceName: OtelConstants.AspireServiceName,
+                    serviceName: serviceName ?? OtelConstants.AspireServiceName,
                     serviceInstanceId: instanceId,
                     autoGenerateServiceInstanceId: instanceId is null);
 
@@ -127,6 +168,7 @@ public static class Extensions
                         ? new Uri(otlpEndpoint, OtelConstants.MetricsRoute)
                         : otlpEndpoint;
                     o.Protocol = otlpProto;
+                    o.TimeoutMilliseconds = 3000;
                 });
             })
             .WithTracing(tracing =>
@@ -135,12 +177,21 @@ public static class Extensions
                     .AddHttpClientInstrumentation()
                     .AddEntityFrameworkCoreInstrumentation();
 
+                if (customActivitySourceNames is not null)
+                {
+                    foreach (var sourceName in customActivitySourceNames)
+                    {
+                        tracing.AddSource(sourceName);
+                    }
+                }
+
                 tracing.AddOtlpExporter(o =>
                 {
                     o.Endpoint = otlpProto == OtlpExportProtocol.HttpProtobuf
                         ? new Uri(otlpEndpoint, OtelConstants.TracesRoute)
                         : otlpEndpoint;
                     o.Protocol = otlpProto;
+                    o.TimeoutMilliseconds = 3000;
                 });
             });
 
@@ -155,6 +206,7 @@ public static class Extensions
                     ? new Uri(otlpEndpoint, OtelConstants.LogsRoute)
                     : otlpEndpoint;
                 o.Protocol = otlpProto;
+                o.TimeoutMilliseconds = 3000;
             });
         });
     }
@@ -166,6 +218,24 @@ public static class Extensions
             .AddCheck("self", () => HealthCheckResult.Healthy(), [Live]);
 
         builder.Services.AddServiceDiscovery();
+    }
+
+    /// <summary>
+    /// Configures Kestrel URLs from the "Hosting" configuration section.
+    /// Under Aspire, ASPNETCORE_URLS env var takes precedence and this is skipped.
+    /// </summary>
+    public static void UseHostingOptions(this WebApplicationBuilder builder)
+    {
+        var aspnetCoreUrls = Environment.GetEnvironmentVariable("ASPNETCORE_URLS");
+        if (aspnetCoreUrls is not null)
+            return;
+
+        var hostingOptions = builder.Configuration
+            .GetSection(HostingOptions.SectionName)
+            .Get<HostingOptions>();
+
+        if (hostingOptions?.Urls is not null)
+            builder.WebHost.UseUrls(hostingOptions.Urls);
     }
 
     public static void MapDefaultEndpoints(this WebApplication app)
