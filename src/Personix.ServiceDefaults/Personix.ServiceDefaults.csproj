@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageId>Personix.ServiceDefaults</PackageId>
+    <AssemblyName>Personix.ServiceDefaults</AssemblyName>
+    <RootNamespace>Personix.ServiceDefaults</RootNamespace>
+    <Version>1.0.0</Version>
+    <Authors>Pavel Kudrna</Authors>
+    <Company>Personix</Company>
+    <Product>Personix.ServiceDefaults</Product>
+    <Description>One call that wires up the cross-cutting concerns every service needs: OpenTelemetry traces, metrics and logs over OTLP, Serilog, health check endpoints, service discovery, and HTTP resilience. A missing collector degrades to console logging instead of preventing start-up.</Description>
+    <Copyright>Copyright (c) 2026 Personix</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/personix-org/ServiceDefaults</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/personix-org/ServiceDefaults</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>opentelemetry;serilog;health-checks;service-discovery;resilience;aspire;observability</PackageTags>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Personix.Otel.Constants" Version="1.0.4" />
+    <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="10.8.0" />
+    <PackageReference Include="Microsoft.Extensions.ServiceDiscovery" Version="10.8.0" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.17.0" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.17.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.17.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.17.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.17.0" />
+    <!-- The Entity Framework instrumentation has never shipped a stable release upstream; a beta is
+         the only option. Pinned to a published beta rather than tracking the newest one. -->
+    <PackageReference Include="OpenTelemetry.Instrumentation.EntityFrameworkCore" Version="1.17.0-beta.1" />
+    <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
+    <PackageReference Include="Serilog.Settings.Configuration" Version="10.0.1" />
+    <PackageReference Include="Serilog.Sinks.OpenTelemetry" Version="4.2.0" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.301" PrivateAssets="All" />
+  </ItemGroup>
+
+</Project>
